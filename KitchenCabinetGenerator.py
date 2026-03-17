@@ -127,12 +127,11 @@ def _get_or_create_part_component(library_comp: adsk.fusion.Component,
 
 def _place_part_occurrence(target_comp: adsk.fusion.Component,
                            part_comp: adsk.fusion.Component,
-                           instance_name: str,
                            x: float,
                            y: float,
                            z: float):
-    occ = target_comp.occurrences.addExistingComponent(part_comp, _translation_matrix(x, y, z))
-    occ.name = instance_name
+    # Fusion API dažās versijās Occurrence.name ir read-only, tāpēc neuzstādam to manuāli.
+    target_comp.occurrences.addExistingComponent(part_comp, _translation_matrix(x, y, z))
 
 
 def _build_cabinet(root_comp: adsk.fusion.Component,
@@ -156,19 +155,19 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
     back_part = _get_or_create_part_component(library_comp, 'AIZMUGURE3', width, height, back_thickness)
 
     # Priekšskats: Z=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Z).
-    _place_part_occurrence(cabinet_comp, side_part, 'Kreisais_sans:1', 0, 0, -depth)
-    _place_part_occurrence(cabinet_comp, side_part, 'Labais_sans:1', width - thickness, 0, -depth)
+    _place_part_occurrence(cabinet_comp, side_part, 0, 0, -depth)
+    _place_part_occurrence(cabinet_comp, side_part, width - thickness, 0, -depth)
 
-    _place_part_occurrence(cabinet_comp, horizontal_part, 'Apaksa:1', thickness, 0, -depth)
-    _place_part_occurrence(cabinet_comp, horizontal_part, 'Augsa:1', thickness, height - thickness, -depth)
+    _place_part_occurrence(cabinet_comp, horizontal_part, thickness, 0, -depth)
+    _place_part_occurrence(cabinet_comp, horizontal_part, thickness, height - thickness, -depth)
 
     if shelf_count > 0:
         gap = (inner_height - shelf_count * thickness) / (shelf_count + 1)
         for i in range(shelf_count):
             y = thickness + gap * (i + 1) + thickness * i
-            _place_part_occurrence(cabinet_comp, horizontal_part, f'Plaukts_{i + 1}:1', thickness, y, -depth)
+            _place_part_occurrence(cabinet_comp, horizontal_part, thickness, y, -depth)
 
-    _place_part_occurrence(cabinet_comp, back_part, 'Aizmugure_3mm:1', 0, 0, -depth)
+    _place_part_occurrence(cabinet_comp, back_part, 0, 0, -depth)
 
 
 def _show_error(message: str):
