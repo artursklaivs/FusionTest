@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "9f0ac0f4-64b1-46fd-b91c-47ed7346e8d7",
+  "author": "Codex",
+  "description": {
+    "": "Fusion 360 add-in, kas ģenerē virtuves skapīti ar vienmērīgi izvietotiem plauktiem."
+  },
+  "version": "1.0.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
