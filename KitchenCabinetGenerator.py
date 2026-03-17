@@ -24,6 +24,11 @@ def _translation_matrix(x: float, y: float, z: float) -> adsk.core.Matrix3D:
     return matrix
 
 
+def _safe_name(value: str, fallback: str) -> str:
+    text = (value or '').strip()
+    return text if text else fallback
+
+
 class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs):
         try:
@@ -35,6 +40,14 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             inputs.addValueInput('depth', 'Dziļums', 'mm', _mm(320))
             inputs.addIntegerSpinnerCommandInput('shelves', 'Plauktu skaits', 0, 12, 1, 2)
             inputs.addValueInput('thickness', 'Korpusa biezums', 'mm', _mm(18))
+
+            # Nosaukumu ievades
+            inputs.addStringValueInput('cabinetName', 'Skapīša nosaukums', 'Skapitis')
+            inputs.addStringValueInput('sideName', 'Sānu detaļas nosaukums', 'Sans')
+            inputs.addStringValueInput('bottomName', 'Apakšas detaļas nosaukums', 'Apaksa')
+            inputs.addStringValueInput('topName', 'Augšas detaļas nosaukums', 'Augsa')
+            inputs.addStringValueInput('shelfName', 'Plaukta detaļas nosaukums', 'Plaukts')
+            inputs.addStringValueInput('backName', 'Aizmugures detaļas nosaukums', 'Aizmugure_3mm')
 
             on_execute = CommandExecuteHandler()
             cmd.execute.add(on_execute)
@@ -63,12 +76,21 @@ class CommandExecuteHandler(adsk.core.CommandEventHandler):
             thickness = inputs.itemById('thickness').value
             back_thickness = BACK_PANEL_THICKNESS_MM / 10.0  # Fusion iekšēji lieto cm
 
+            names = {
+                'cabinet': _safe_name(inputs.itemById('cabinetName').value, 'Skapitis'),
+                'side': _safe_name(inputs.itemById('sideName').value, 'Sans'),
+                'bottom': _safe_name(inputs.itemById('bottomName').value, 'Apaksa'),
+                'top': _safe_name(inputs.itemById('topName').value, 'Augsa'),
+                'shelf': _safe_name(inputs.itemById('shelfName').value, 'Plaukts'),
+                'back': _safe_name(inputs.itemById('backName').value, 'Aizmugure_3mm')
+            }
+
             min_size = thickness * 2.0 + 0.1
             if width <= min_size or height <= min_size or depth <= back_thickness:
                 _show_error('Pārāk mazi izmēri izvēlētajam korpusa biezumam.')
                 return
 
-            _build_cabinet(root_comp, width, height, depth, thickness, back_thickness, shelves)
+            _build_cabinet(root_comp, width, height, depth, thickness, back_thickness, shelves, names)
         except Exception:
             _show_error('Kļūda izveidojot skapīti.')
 
@@ -96,9 +118,7 @@ def _create_part_geometry(part_comp: adsk.fusion.Component, width: float, height
     sketches = part_comp.sketches
     sketch = sketches.add(part_comp.xYConstructionPlane)
     lines = sketch.sketchCurves.sketchLines
-    p1 = adsk.core.Point3D.create(0, 0, 0)
-    p2 = adsk.core.Point3D.create(width, height, 0)
-    lines.addTwoPointRectangle(p1, p2)
+    lines.addTwoPointRectangle(adsk.core.Point3D.create(0, 0, 0), adsk.core.Point3D.create(width, height, 0))
 
     profile = sketch.profiles.item(0)
     extrudes = part_comp.features.extrudeFeatures
@@ -113,7 +133,6 @@ def _get_or_create_part_component(library_comp: adsk.fusion.Component,
                                   height: float,
                                   depth: float) -> adsk.fusion.Component:
     key = f'{part_code}_{int(width*10)}x{int(height*10)}x{int(depth*10)}'
-
     existing = _find_child_component(library_comp, key)
     if existing:
         return existing
@@ -125,13 +144,17 @@ def _get_or_create_part_component(library_comp: adsk.fusion.Component,
     return part_comp
 
 
-def _place_part_occurrence(target_comp: adsk.fusion.Component,
-                           part_comp: adsk.fusion.Component,
-                           x: float,
-                           y: float,
-                           z: float):
-    # Fusion API dažās versijās Occurrence.name ir read-only, tāpēc neuzstādam to manuāli.
-    target_comp.occurrences.addExistingComponent(part_comp, _translation_matrix(x, y, z))
+def _place_named_part(target_comp: adsk.fusion.Component,
+                      part_comp: adsk.fusion.Component,
+                      instance_name: str,
+                      x: float,
+                      y: float,
+                      z: float):
+    # Wrapper komponente ļauj lietotāja nosaukumu, saglabājot koplietojamu detaļas komponenti.
+    wrapper_occ = target_comp.occurrences.addNewComponent(_translation_matrix(x, y, z))
+    wrapper_comp = wrapper_occ.component
+    wrapper_comp.name = instance_name
+    wrapper_comp.occurrences.addExistingComponent(part_comp, adsk.core.Matrix3D.create())
 
 
 def _build_cabinet(root_comp: adsk.fusion.Component,
@@ -140,12 +163,13 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
                    depth: float,
                    thickness: float,
                    back_thickness: float,
-                   shelf_count: int):
+                   shelf_count: int,
+                   names: dict):
     library_comp = _get_or_create_parts_library(root_comp)
 
     cabinet_occ = root_comp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
     cabinet_comp = cabinet_occ.component
-    cabinet_comp.name = f'Skapītis_{int(width*10)}x{int(height*10)}x{int(depth*10)}'
+    cabinet_comp.name = f"{names['cabinet']}_{int(width*10)}x{int(height*10)}x{int(depth*10)}"
 
     inner_width = width - 2 * thickness
     inner_height = height - 2 * thickness
@@ -155,19 +179,19 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
     back_part = _get_or_create_part_component(library_comp, 'AIZMUGURE3', width, height, back_thickness)
 
     # Priekšskats: Z=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Z).
-    _place_part_occurrence(cabinet_comp, side_part, 0, 0, -depth)
-    _place_part_occurrence(cabinet_comp, side_part, width - thickness, 0, -depth)
+    _place_named_part(cabinet_comp, side_part, f"{names['side']}_Kreisais", 0, 0, -depth)
+    _place_named_part(cabinet_comp, side_part, f"{names['side']}_Labais", width - thickness, 0, -depth)
 
-    _place_part_occurrence(cabinet_comp, horizontal_part, thickness, 0, -depth)
-    _place_part_occurrence(cabinet_comp, horizontal_part, thickness, height - thickness, -depth)
+    _place_named_part(cabinet_comp, horizontal_part, names['bottom'], thickness, 0, -depth)
+    _place_named_part(cabinet_comp, horizontal_part, names['top'], thickness, height - thickness, -depth)
 
     if shelf_count > 0:
         gap = (inner_height - shelf_count * thickness) / (shelf_count + 1)
         for i in range(shelf_count):
             y = thickness + gap * (i + 1) + thickness * i
-            _place_part_occurrence(cabinet_comp, horizontal_part, thickness, y, -depth)
+            _place_named_part(cabinet_comp, horizontal_part, f"{names['shelf']}_{i+1}", thickness, y, -depth)
 
-    _place_part_occurrence(cabinet_comp, back_part, 0, 0, -depth)
+    _place_named_part(cabinet_comp, back_part, names['back'], 0, 0, -depth)
 
 
 def _show_error(message: str):
