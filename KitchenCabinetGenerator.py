@@ -9,12 +9,19 @@ WORKSPACE_ID = 'FusionSolidEnvironment'
 PANEL_ID = 'SolidCreatePanel'
 COMMAND_BESIDE_ID = 'BoxCommand'
 BACK_PANEL_THICKNESS_MM = 3.0
+PARTS_LIBRARY_NAME = 'KitchenCabinetPartsLibrary'
 
 handlers = []
 
 
 def _mm(value: float) -> adsk.core.ValueInput:
     return adsk.core.ValueInput.createByString(f'{value} mm')
+
+
+def _translation_matrix(x: float, y: float, z: float) -> adsk.core.Matrix3D:
+    matrix = adsk.core.Matrix3D.create()
+    matrix.translation = adsk.core.Vector3D.create(x, y, z)
+    return matrix
 
 
 class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
@@ -66,31 +73,66 @@ class CommandExecuteHandler(adsk.core.CommandEventHandler):
             _show_error('Kļūda izveidojot skapīti.')
 
 
-def _create_board(parent_comp: adsk.fusion.Component,
-                  name: str,
-                  x: float,
-                  y: float,
-                  width: float,
-                  height: float,
-                  z: float,
-                  depth: float):
-    """Izveido plātni no priekšskata (X-Y), ekstrūzija notiek pa Z asi (dziļumā)."""
-    sketches = parent_comp.sketches
-    xy_plane = parent_comp.xYConstructionPlane
-    sketch = sketches.add(xy_plane)
-    rect_lines = sketch.sketchCurves.sketchLines
+def _find_child_component(parent: adsk.fusion.Component, name: str):
+    for occ in parent.occurrences:
+        if occ.component.name == name:
+            return occ.component
+    return None
 
-    p1 = adsk.core.Point3D.create(x, y, 0)
-    p2 = adsk.core.Point3D.create(x + width, y + height, 0)
-    rect_lines.addTwoPointRectangle(p1, p2)
 
-    prof = sketch.profiles.item(0)
-    extrudes = parent_comp.features.extrudeFeatures
-    ext_input = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
-    ext_input.startExtent = adsk.fusion.OffsetStartDefinition.create(adsk.core.ValueInput.createByReal(z))
+def _get_or_create_parts_library(root_comp: adsk.fusion.Component) -> adsk.fusion.Component:
+    existing = _find_child_component(root_comp, PARTS_LIBRARY_NAME)
+    if existing:
+        return existing
+
+    occ = root_comp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    occ.isLightBulbOn = False
+    library_comp = occ.component
+    library_comp.name = PARTS_LIBRARY_NAME
+    return library_comp
+
+
+def _create_part_geometry(part_comp: adsk.fusion.Component, width: float, height: float, depth: float):
+    sketches = part_comp.sketches
+    sketch = sketches.add(part_comp.xYConstructionPlane)
+    lines = sketch.sketchCurves.sketchLines
+    p1 = adsk.core.Point3D.create(0, 0, 0)
+    p2 = adsk.core.Point3D.create(width, height, 0)
+    lines.addTwoPointRectangle(p1, p2)
+
+    profile = sketch.profiles.item(0)
+    extrudes = part_comp.features.extrudeFeatures
+    ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(depth))
-    ext = extrudes.add(ext_input)
-    ext.bodies.item(0).name = name
+    extrudes.add(ext_input)
+
+
+def _get_or_create_part_component(library_comp: adsk.fusion.Component,
+                                  part_code: str,
+                                  width: float,
+                                  height: float,
+                                  depth: float) -> adsk.fusion.Component:
+    key = f'{part_code}_{int(width*10)}x{int(height*10)}x{int(depth*10)}'
+
+    existing = _find_child_component(library_comp, key)
+    if existing:
+        return existing
+
+    occ = library_comp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    part_comp = occ.component
+    part_comp.name = key
+    _create_part_geometry(part_comp, width, height, depth)
+    return part_comp
+
+
+def _place_part_occurrence(target_comp: adsk.fusion.Component,
+                           part_comp: adsk.fusion.Component,
+                           instance_name: str,
+                           x: float,
+                           y: float,
+                           z: float):
+    occ = target_comp.occurrences.addExistingComponent(part_comp, _translation_matrix(x, y, z))
+    occ.name = instance_name
 
 
 def _build_cabinet(root_comp: adsk.fusion.Component,
@@ -100,28 +142,33 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
                    thickness: float,
                    back_thickness: float,
                    shelf_count: int):
-    occ = root_comp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-    comp = occ.component
-    comp.name = f'Skapītis_{int(width*10)}x{int(height*10)}x{int(depth*10)}'
+    library_comp = _get_or_create_parts_library(root_comp)
+
+    cabinet_occ = root_comp.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    cabinet_comp = cabinet_occ.component
+    cabinet_comp.name = f'Skapītis_{int(width*10)}x{int(height*10)}x{int(depth*10)}'
 
     inner_width = width - 2 * thickness
     inner_height = height - 2 * thickness
 
-    # Priekšskats: Z=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Z).
-    _create_board(comp, 'Kreisais sāns', 0, 0, thickness, height, 0, -depth)
-    _create_board(comp, 'Labais sāns', width - thickness, 0, thickness, height, 0, -depth)
+    side_part = _get_or_create_part_component(library_comp, 'SANS', thickness, height, depth)
+    horizontal_part = _get_or_create_part_component(library_comp, 'HORIZONTAL', inner_width, thickness, depth)
+    back_part = _get_or_create_part_component(library_comp, 'AIZMUGURE3', width, height, back_thickness)
 
-    _create_board(comp, 'Apakša', thickness, 0, inner_width, thickness, 0, -depth)
-    _create_board(comp, 'Augša', thickness, height - thickness, inner_width, thickness, 0, -depth)
+    # Priekšskats: Z=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Z).
+    _place_part_occurrence(cabinet_comp, side_part, 'Kreisais_sans:1', 0, 0, -depth)
+    _place_part_occurrence(cabinet_comp, side_part, 'Labais_sans:1', width - thickness, 0, -depth)
+
+    _place_part_occurrence(cabinet_comp, horizontal_part, 'Apaksa:1', thickness, 0, -depth)
+    _place_part_occurrence(cabinet_comp, horizontal_part, 'Augsa:1', thickness, height - thickness, -depth)
 
     if shelf_count > 0:
         gap = (inner_height - shelf_count * thickness) / (shelf_count + 1)
         for i in range(shelf_count):
             y = thickness + gap * (i + 1) + thickness * i
-            _create_board(comp, f'Plaukts_{i + 1}', thickness, y, inner_width, thickness, 0, -depth)
+            _place_part_occurrence(cabinet_comp, horizontal_part, f'Plaukts_{i + 1}:1', thickness, y, -depth)
 
-    # Aizmugure 3 mm bieza pie pašas aizmugures malas.
-    _create_board(comp, 'Aizmugure_3mm', 0, 0, width, height, -depth, back_thickness)
+    _place_part_occurrence(cabinet_comp, back_part, 'Aizmugure_3mm:1', 0, 0, -depth)
 
 
 def _show_error(message: str):
