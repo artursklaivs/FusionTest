@@ -69,27 +69,26 @@ class CommandExecuteHandler(adsk.core.CommandEventHandler):
 def _create_board(parent_comp: adsk.fusion.Component,
                   name: str,
                   x: float,
-                  z: float,
+                  y: float,
                   width: float,
                   height: float,
-                  y: float,
+                  z: float,
                   depth: float):
-    """Izveido plātni no priekšskata (X-Z), ekstrūzija notiek pa Y asi (dziļumā)."""
+    """Izveido plātni no priekšskata (X-Y), ekstrūzija notiek pa Z asi (dziļumā)."""
     sketches = parent_comp.sketches
-    xz_plane = parent_comp.xZConstructionPlane
-    sketch = sketches.add(xz_plane)
+    xy_plane = parent_comp.xYConstructionPlane
+    sketch = sketches.add(xy_plane)
     rect_lines = sketch.sketchCurves.sketchLines
 
-    p1 = adsk.core.Point3D.create(x, z, 0)
-    p2 = adsk.core.Point3D.create(x + width, z + height, 0)
+    p1 = adsk.core.Point3D.create(x, y, 0)
+    p2 = adsk.core.Point3D.create(x + width, y + height, 0)
     rect_lines.addTwoPointRectangle(p1, p2)
 
     prof = sketch.profiles.item(0)
     extrudes = parent_comp.features.extrudeFeatures
     ext_input = extrudes.createInput(prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
-    ext_input.startExtent = adsk.fusion.OffsetStartDefinition.create(adsk.core.ValueInput.createByReal(y))
-    distance = adsk.core.ValueInput.createByReal(depth)
-    ext_input.setDistanceExtent(False, distance)
+    ext_input.startExtent = adsk.fusion.OffsetStartDefinition.create(adsk.core.ValueInput.createByReal(z))
+    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(depth))
     ext = extrudes.add(ext_input)
     ext.bodies.item(0).name = name
 
@@ -108,7 +107,7 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
     inner_width = width - 2 * thickness
     inner_height = height - 2 * thickness
 
-    # Priekšskats: Y=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Y).
+    # Priekšskats: Z=0 ir priekšējā mala, skapītis iet uz aizmuguri (negatīvs Z).
     _create_board(comp, 'Kreisais sāns', 0, 0, thickness, height, 0, -depth)
     _create_board(comp, 'Labais sāns', width - thickness, 0, thickness, height, 0, -depth)
 
@@ -118,8 +117,8 @@ def _build_cabinet(root_comp: adsk.fusion.Component,
     if shelf_count > 0:
         gap = (inner_height - shelf_count * thickness) / (shelf_count + 1)
         for i in range(shelf_count):
-            z = thickness + gap * (i + 1) + thickness * i
-            _create_board(comp, f'Plaukts_{i + 1}', thickness, z, inner_width, thickness, 0, -depth)
+            y = thickness + gap * (i + 1) + thickness * i
+            _create_board(comp, f'Plaukts_{i + 1}', thickness, y, inner_width, thickness, 0, -depth)
 
     # Aizmugure 3 mm bieza pie pašas aizmugures malas.
     _create_board(comp, 'Aizmugure_3mm', 0, 0, width, height, -depth, back_thickness)
